@@ -31,7 +31,7 @@ theme_set(theme_minimal() + theme(legend.position = "bottom"))
 
 Create a city_state variable (e.g. “Baltimore, MD”), and a binary variable indicating whether the homicide is solved. Omit cities Dallas, TX; Phoenix, AZ; and Kansas City, MO – these don’t report victim race. Also omit Tulsa, AL – this is a data entry mistake. For this problem, limit your analysis those for whom victim_race is white or black. Be sure that victim_age is numeric.
 
-```{r}
+```{r message = FALSE}
 homicide_df = 
   read_csv("data/homicide-data.csv", na = c("", "NA", "Unknown")) %>% 
   mutate(
@@ -99,3 +99,111 @@ models_results_df %>%
   geom_errorbar(aes(ymin = CI_lower, ymax = CI_upper)) + 
   theme(axis.text.x = element_text(angle = 90, hjust = 1))
 ```
+
+
+## Problem 2
+
+Load and clean the data for regression analysis (i.e. convert numeric to factor where appropriate, check for missing data, etc.).
+
+```{r message = FALSE}
+birthweight_df = 
+  read_csv("./data/birthweight.csv") %>% 
+  
+  mutate(
+    babysex = case_when(
+      babysex == 1 ~ "Male",
+      babysex == 2 ~ "Female"
+    ) %>% as.factor(),
+    
+    frace = case_when(
+      frace == 1 ~ "White",
+      frace == 2 ~ "Black",
+      frace == 3 ~ "Asian",
+      frace == 4 ~ "Puerto Rican",
+      frace == 8 ~ "Other",
+      frace == 9 ~ "Unknown"
+    ) %>% as.factor(),
+    
+    malform = case_when(
+      malform == 0 ~ "Absent",
+      malform == 1 ~ "Present"
+    ) %>% as.factor(),
+    
+    mrace = case_when(
+      mrace == 1 ~ "White",
+      mrace == 2 ~ "Black",
+      mrace == 3 ~ "Asian",
+      mrace == 4 ~ "Puerto Rican",
+      mrace == 8 ~ "Other",
+      mrace == 9 ~ "Unknown"
+    ) %>% as.factor()
+  )
+```
+
+Baby’s sex, father’s race, presence of malformations that could affect weight, and mother’s race were converted to factor. The birthweight dataset has `r birthweight_df %>% nrow()` rows and `r birthweight_df %>% ncol()`columns. There is `r birthweight_df %>% filter(is.na(bwt)) %>% nrow()` missing data in baby’s birth weight (grams).
+
+<br>
+
+I proposed my regression model for birthweight based on the finding of this [paper](https://www.sciencedirect.com/science/article/abs/pii/0002937882906275), which suggests that the sex of the baby, parity, maternal smoking during the pregnancy, maternal height, weight and gestation were significant factors.
+
+```{r}
+model1_fit = lm(bwt ~ babysex + parity + smoken + mheight + delwt + gaweeks, data = birthweight_df)
+
+model1_fit %>% 
+  broom::tidy() %>% 
+  select(term, estimate, p.value) %>% 
+  knitr::kable(digits = 3)
+
+birthweight_df %>% 
+  modelr::add_predictions(model1_fit) %>% 
+  modelr::add_residuals(model1_fit) %>% 
+  ggplot(aes(x = pred, y = resid)) + 
+  geom_point(alpha = 0.3) +
+  labs(
+    title = "Model 1 Residuals Against Fitted Values",
+    x = "Fitted value",
+    y = "Residual"
+  )
+```
+
+From the "Model 1 Residuals Against Fitted Values" plot, most residuals randomly scatter around 0, indicating that the assumption of normality for residuals is not violated.
+
+<br>
+
+Compare my model to two others in terms of the cross-validated prediction error:
+* Model 2 using length at birth and gestational age as predictors (main effects only)
+* Model 3 using head circumference, length, sex, and all interactions (including the three-way interaction) between these.
+
+```{r warning = FALSE}
+set.seed(1)
+
+cv_df =
+  crossv_mc(birthweight_df,500) %>% 
+  mutate(
+    train = map(train, as_tibble),
+    test = map(test, as_tibble))
+
+cv_df = 
+  cv_df %>% 
+  mutate(
+    model_1 = map(train, ~lm(bwt ~ babysex + parity + smoken + mheight + delwt + gaweeks, data = .x)),
+    model_2 = map(train, ~lm(bwt ~ blength + gaweeks, data = .x)),
+    model_3 = map(train, ~lm(bwt ~ bhead * blength * babysex, data = .x))) %>% 
+  mutate(
+    rmse_model_1 = map2_dbl(model_1, test, ~rmse(model = .x, data = .y)),
+    rmse_model_2 = map2_dbl(model_2, test, ~rmse(model = .x, data = .y)),
+    rmse_model_3 = map2_dbl(model_3, test, ~rmse(model = .x, data = .y)))
+
+cv_df %>% 
+  select(starts_with("rmse")) %>% 
+  pivot_longer(
+    everything(),
+    names_to = "model", 
+    values_to = "rmse",
+    names_prefix = "rmse_") %>% 
+  mutate(model = fct_inorder(model)) %>% 
+  ggplot(aes(x = model, y = rmse)) + geom_violin()
+```
+
+In terms of the cross-validated prediction error, Model 3, which used head circumference, length, sex, and all interactions, is the best model. (the smaller the RMSE, the better the model)
+
